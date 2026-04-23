@@ -1,3 +1,4 @@
+import { resolveReadOnlyChannelPluginsForConfig } from "../channels/plugins/read-only.js";
 import type { OpenClawConfig } from "../config/types.js";
 import type { HeartbeatEventPayload } from "../infra/heartbeat-events.js";
 import type { HealthSummary } from "./health.js";
@@ -27,12 +28,18 @@ export async function resolveStatusSecurityAudit(params: {
   sourceConfig: OpenClawConfig;
 }) {
   const { runSecurityAudit } = await loadSecurityAuditModule();
+  const readOnlyPlugins = resolveReadOnlyChannelPluginsForConfig(params.config, {
+    activationSourceConfig: params.sourceConfig,
+  });
   return await runSecurityAudit({
     config: params.config,
     sourceConfig: params.sourceConfig,
     deep: false,
     includeFilesystem: true,
     includeChannelSecurity: true,
+    ...(readOnlyPlugins.missingConfiguredChannelIds.length === 0
+      ? { plugins: readOnlyPlugins.plugins }
+      : {}),
   });
 }
 
@@ -108,6 +115,7 @@ type StatusGatewayHealth = Awaited<ReturnType<typeof resolveStatusGatewayHealth>
 type StatusLastHeartbeat = Awaited<ReturnType<typeof resolveStatusLastHeartbeat>>;
 type StatusGatewayServiceSummary = Awaited<ReturnType<typeof getDaemonStatusSummary>>;
 type StatusNodeServiceSummary = Awaited<ReturnType<typeof getNodeDaemonStatusSummary>>;
+type StatusSecurityAudit = Awaited<ReturnType<typeof resolveStatusSecurityAudit>>;
 
 export async function resolveStatusRuntimeDetails(params: {
   config: OpenClawConfig;
@@ -152,6 +160,54 @@ export async function resolveStatusRuntimeDetails(params: {
     nodeService,
   };
   return result satisfies {
+    usage?: StatusUsageSummary;
+    health?: StatusGatewayHealth;
+    lastHeartbeat: StatusLastHeartbeat;
+    gatewayService: StatusGatewayServiceSummary;
+    nodeService: StatusNodeServiceSummary;
+  };
+}
+
+export async function resolveStatusRuntimeSnapshot(params: {
+  config: OpenClawConfig;
+  sourceConfig: OpenClawConfig;
+  timeoutMs?: number;
+  usage?: boolean;
+  deep?: boolean;
+  gatewayReachable: boolean;
+  includeSecurityAudit?: boolean;
+  suppressHealthErrors?: boolean;
+  resolveSecurityAudit?: (input: {
+    config: OpenClawConfig;
+    sourceConfig: OpenClawConfig;
+  }) => Promise<StatusSecurityAudit>;
+  resolveUsage?: (timeoutMs?: number) => Promise<StatusUsageSummary>;
+  resolveHealth?: (input: {
+    config: OpenClawConfig;
+    timeoutMs?: number;
+  }) => Promise<StatusGatewayHealth>;
+}) {
+  const securityAudit = params.includeSecurityAudit
+    ? await (params.resolveSecurityAudit ?? resolveStatusSecurityAudit)({
+        config: params.config,
+        sourceConfig: params.sourceConfig,
+      })
+    : undefined;
+  const runtimeDetails = await resolveStatusRuntimeDetails({
+    config: params.config,
+    timeoutMs: params.timeoutMs,
+    usage: params.usage,
+    deep: params.deep,
+    gatewayReachable: params.gatewayReachable,
+    suppressHealthErrors: params.suppressHealthErrors,
+    resolveUsage: params.resolveUsage,
+    resolveHealth: params.resolveHealth,
+  });
+  return {
+    securityAudit,
+    ...runtimeDetails,
+  } satisfies {
+    securityAudit?: StatusSecurityAudit;
     usage?: StatusUsageSummary;
     health?: StatusGatewayHealth;
     lastHeartbeat: StatusLastHeartbeat;

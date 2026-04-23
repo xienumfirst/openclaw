@@ -20,6 +20,13 @@ API key auth, and dynamic model resolution.
   structure and manifest setup.
 </Info>
 
+<Tip>
+  Provider plugins add models to OpenClaw's normal inference loop. If the model
+  must run through a native agent daemon that owns threads, compaction, or tool
+  events, pair the provider with an [agent harness](/plugins/sdk-agent-harness)
+  instead of putting daemon protocol details in core.
+</Tip>
+
 ## Walkthrough
 
 <Steps>
@@ -58,6 +65,9 @@ API key auth, and dynamic model resolution.
       "providerAuthEnvVars": {
         "acme-ai": ["ACME_AI_API_KEY"]
       },
+      "providerAuthAliases": {
+        "acme-ai-coding": "acme-ai"
+      },
       "providerAuthChoices": [
         {
           "provider": "acme-ai",
@@ -80,9 +90,10 @@ API key auth, and dynamic model resolution.
     </CodeGroup>
 
     The manifest declares `providerAuthEnvVars` so OpenClaw can detect
-    credentials without loading your plugin runtime. `modelSupport` is optional
-    and lets OpenClaw auto-load your provider plugin from shorthand model ids
-    like `acme-large` before runtime hooks exist. If you publish the
+    credentials without loading your plugin runtime. Add `providerAuthAliases`
+    when a provider variant should reuse another provider id's auth. `modelSupport`
+    is optional and lets OpenClaw auto-load your provider plugin from shorthand
+    model ids like `acme-large` before runtime hooks exist. If you publish the
     provider on ClawHub, those `openclaw.compat` and `openclaw.build` fields
     are required in `package.json`.
 
@@ -164,6 +175,28 @@ API key auth, and dynamic model resolution.
     `openclaw onboard --acme-ai-api-key <key>` and select
     `acme-ai/acme-large` as their model.
 
+    If the upstream provider uses different control tokens than OpenClaw, add a
+    small bidirectional text transform instead of replacing the stream path:
+
+    ```typescript
+    api.registerTextTransforms({
+      input: [
+        { from: /red basket/g, to: "blue basket" },
+        { from: /paper ticket/g, to: "digital ticket" },
+        { from: /left shelf/g, to: "right shelf" },
+      ],
+      output: [
+        { from: /blue basket/g, to: "red basket" },
+        { from: /digital ticket/g, to: "paper ticket" },
+        { from: /right shelf/g, to: "left shelf" },
+      ],
+    });
+    ```
+
+    `input` rewrites the final system prompt and text message content before
+    transport. `output` rewrites assistant text deltas and final text before
+    OpenClaw parses its own control markers or channel delivery.
+
     For bundled providers that only register one text provider with API-key
     auth plus a single catalog-backed runtime, prefer the narrower
     `defineSingleProviderPluginEntry(...)` helper:
@@ -196,10 +229,23 @@ API key auth, and dynamic model resolution.
             baseUrl: "https://api.acme-ai.com/v1",
             models: [{ id: "acme-large", name: "Acme Large" }],
           }),
+          buildStaticProvider: () => ({
+            api: "openai-completions",
+            baseUrl: "https://api.acme-ai.com/v1",
+            models: [{ id: "acme-large", name: "Acme Large" }],
+          }),
         },
       },
     });
     ```
+
+    `buildProvider` is the live catalog path used when OpenClaw can resolve real
+    provider auth. It may perform provider-specific discovery. Use
+    `buildStaticProvider` only for offline rows that are safe to show before auth
+    is configured; it must not require credentials or make network requests.
+    OpenClaw's `models list --all` display currently executes static catalogs
+    only for bundled provider plugins, with an empty config, empty env, and no
+    agent/workspace paths.
 
     If your auth flow also needs to patch `models.providers.*`, aliases, and
     the agent default model during onboarding, use the preset helpers from
@@ -283,7 +329,7 @@ API key auth, and dynamic model resolution.
 
     Real bundled examples:
 
-    - `google`: `google-gemini`
+    - `google` and `google-gemini-cli`: `google-gemini`
     - `openrouter`, `kilocode`, `opencode`, and `opencode-go`: `passthrough-gemini`
     - `amazon-bedrock` and `anthropic-vertex`: `anthropic-by-model`
     - `minimax`: `hybrid-anthropic-openai`
@@ -303,7 +349,7 @@ API key auth, and dynamic model resolution.
 
     Real bundled examples:
 
-    - `google`: `google-thinking`
+    - `google` and `google-gemini-cli`: `google-thinking`
     - `kilocode`: `kilocode-thinking`
     - `moonshot`: `moonshot-thinking`
     - `minimax` and `minimax-portal`: `minimax-fast-mode`
@@ -500,18 +546,19 @@ API key auth, and dynamic model resolution.
       | 29 | `buildMissingAuthMessage` | Custom missing-auth hint |
       | 30 | `suppressBuiltInModel` | Hide stale upstream rows |
       | 31 | `augmentModelCatalog` | Synthetic forward-compat rows |
-      | 32 | `isBinaryThinking` | Binary thinking on/off |
-      | 33 | `supportsXHighThinking` | `xhigh` reasoning support |
-      | 34 | `resolveDefaultThinkingLevel` | Default `/think` policy |
-      | 35 | `isModernModelRef` | Live/smoke model matching |
-      | 36 | `prepareRuntimeAuth` | Token exchange before inference |
-      | 37 | `resolveUsageAuth` | Custom usage credential parsing |
-      | 38 | `fetchUsageSnapshot` | Custom usage endpoint |
-      | 39 | `createEmbeddingProvider` | Provider-owned embedding adapter for memory/search |
-      | 40 | `buildReplayPolicy` | Custom transcript replay/compaction policy |
-      | 41 | `sanitizeReplayHistory` | Provider-specific replay rewrites after generic cleanup |
-      | 42 | `validateReplayTurns` | Strict replay-turn validation before the embedded runner |
-      | 43 | `onModelSelected` | Post-selection callback (e.g. telemetry) |
+      | 32 | `resolveThinkingProfile` | Model-specific `/think` option set |
+      | 33 | `isBinaryThinking` | Binary thinking on/off compatibility |
+      | 34 | `supportsXHighThinking` | `xhigh` reasoning support compatibility |
+      | 35 | `resolveDefaultThinkingLevel` | Default `/think` policy compatibility |
+      | 36 | `isModernModelRef` | Live/smoke model matching |
+      | 37 | `prepareRuntimeAuth` | Token exchange before inference |
+      | 38 | `resolveUsageAuth` | Custom usage credential parsing |
+      | 39 | `fetchUsageSnapshot` | Custom usage endpoint |
+      | 40 | `createEmbeddingProvider` | Provider-owned embedding adapter for memory/search |
+      | 41 | `buildReplayPolicy` | Custom transcript replay/compaction policy |
+      | 42 | `sanitizeReplayHistory` | Provider-specific replay rewrites after generic cleanup |
+      | 43 | `validateReplayTurns` | Strict replay-turn validation before the embedded runner |
+      | 44 | `onModelSelected` | Post-selection callback (e.g. telemetry) |
 
       Prompt tuning note:
 
@@ -552,12 +599,34 @@ API key auth, and dynamic model resolution.
         id: "acme-ai",
         label: "Acme Realtime Transcription",
         isConfigured: () => true,
-        createSession: (req) => ({
-          connect: async () => {},
-          sendAudio: () => {},
-          close: () => {},
-          isConnected: () => true,
-        }),
+        createSession: (req) => {
+          const apiKey = String(req.providerConfig.apiKey ?? "");
+          return createRealtimeTranscriptionWebSocketSession({
+            providerId: "acme-ai",
+            callbacks: req,
+            url: "wss://api.example.com/v1/realtime-transcription",
+            headers: { Authorization: `Bearer ${apiKey}` },
+            onMessage: (event, transport) => {
+              if (event.type === "session.created") {
+                transport.sendJson({ type: "session.update" });
+                transport.markReady();
+                return;
+              }
+              if (event.type === "transcript.final") {
+                req.onTranscript?.(event.text);
+              }
+            },
+            sendAudio: (audio, transport) => {
+              transport.sendJson({
+                type: "audio.append",
+                audio: audio.toString("base64"),
+              });
+            },
+            onClose: (transport) => {
+              transport.sendJson({ type: "audio.end" });
+            },
+          });
+        },
       });
 
       api.registerRealtimeVoiceProvider({
@@ -592,9 +661,20 @@ API key auth, and dynamic model resolution.
         id: "acme-ai",
         label: "Acme Video",
         capabilities: {
-          maxVideos: 1,
-          maxDurationSeconds: 10,
-          supportsResolution: true,
+          generate: {
+            maxVideos: 1,
+            maxDurationSeconds: 10,
+            supportsResolution: true,
+          },
+          imageToVideo: {
+            enabled: true,
+            maxVideos: 1,
+            maxInputImages: 1,
+            maxDurationSeconds: 5,
+          },
+          videoToVideo: {
+            enabled: false,
+          },
         },
         generateVideo: async (req) => ({ videos: [] }),
       });
@@ -630,6 +710,28 @@ API key auth, and dynamic model resolution.
     OpenClaw classifies this as a **hybrid-capability** plugin. This is the
     recommended pattern for company plugins (one plugin per vendor). See
     [Internals: Capability Ownership](/plugins/architecture#capability-ownership-model).
+
+    For video generation, prefer the mode-aware capability shape shown above:
+    `generate`, `imageToVideo`, and `videoToVideo`. Flat aggregate fields such
+    as `maxInputImages`, `maxInputVideos`, and `maxDurationSeconds` are not
+    enough to advertise transform-mode support or disabled modes cleanly.
+
+    Prefer the shared WebSocket helper for streaming STT providers. It keeps
+    proxy capture, reconnect backoff, close flushing, ready handshakes, audio
+    queueing, and close-event diagnostics consistent across providers while
+    leaving provider code responsible for only the upstream event mapping.
+
+    Batch STT providers that POST multipart audio should use
+    `buildAudioTranscriptionFormData(...)` from
+    `openclaw/plugin-sdk/provider-http` together with the provider HTTP request
+    helpers. The form helper normalizes upload filenames, including AAC uploads
+    that need an M4A-style filename for compatible transcription APIs.
+
+    Music-generation providers should follow the same pattern:
+    `generate` for prompt-only generation and `edit` for reference-image-based
+    generation. Flat aggregate fields such as `maxInputImages`,
+    `supportsLyrics`, and `supportsFormat` are not enough to advertise edit
+    support; explicit `generate` / `edit` blocks are the expected contract.
 
   </Step>
 
@@ -685,7 +787,7 @@ Do not use the legacy skill-only publish alias here; plugin packages should use
 ```
 <bundled-plugin-root>/acme-ai/
 ├── package.json              # openclaw.providers metadata
-├── openclaw.plugin.json      # Manifest with providerAuthEnvVars
+├── openclaw.plugin.json      # Manifest with provider auth metadata
 ├── index.ts                  # definePluginEntry + registerProvider
 └── src/
     ├── provider.test.ts      # Tests

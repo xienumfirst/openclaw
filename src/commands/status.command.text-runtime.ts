@@ -13,7 +13,7 @@ export {
 } from "../plugins/status.js";
 export { getTerminalTableWidth, renderTable } from "../terminal/table.js";
 export { theme } from "../terminal/theme.js";
-export { formatHealthChannelLines } from "./health.js";
+export { formatHealthChannelLines } from "./health-format.js";
 export { groupChannelIssuesByChannel } from "./status-all/channel-issues.js";
 export {
   buildStatusChannelsTableRows,
@@ -21,6 +21,7 @@ export {
 } from "./status-all/channels-table.js";
 export {
   buildStatusGatewaySurfaceValues,
+  buildStatusOverviewSurfaceRows,
   buildStatusOverviewRows,
   buildStatusUpdateSurface,
   buildGatewayStatusSummaryParts,

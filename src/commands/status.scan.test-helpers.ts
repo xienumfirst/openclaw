@@ -15,6 +15,7 @@ export type StatusScanSharedMocks = {
   getStatusSummary: UnknownMock;
   getMemorySearchManager: UnknownMock;
   buildGatewayConnectionDetails: UnknownMock;
+  resolveGatewayProbeTarget: UnknownMock;
   probeGateway: UnknownMock;
   resolveGatewayProbeAuthResolution: UnknownMock;
   ensurePluginRegistryLoaded: UnknownMock;
@@ -32,6 +33,11 @@ export function createStatusScanSharedMocks(configPathLabel: string): StatusScan
     getStatusSummary: vi.fn(),
     getMemorySearchManager: vi.fn(),
     buildGatewayConnectionDetails: vi.fn(),
+    resolveGatewayProbeTarget: vi.fn(() => ({
+      mode: "local",
+      gatewayMode: "local",
+      remoteUrlMissing: false,
+    })),
     probeGateway: vi.fn(),
     resolveGatewayProbeAuthResolution: vi.fn(),
     ensurePluginRegistryLoaded: vi.fn(),
@@ -103,9 +109,13 @@ export function createStatusPluginRegistryModuleMock(
 
 export function createStatusPluginStatusModuleMock(
   mocks: Pick<StatusScanSharedMocks, "buildPluginCompatibilityNotices">,
-): { buildPluginCompatibilityNotices: StatusScanSharedMocks["buildPluginCompatibilityNotices"] } {
+): {
+  buildPluginCompatibilityNotices: StatusScanSharedMocks["buildPluginCompatibilityNotices"];
+  buildPluginCompatibilitySnapshotNotices: StatusScanSharedMocks["buildPluginCompatibilityNotices"];
+} {
   return {
     buildPluginCompatibilityNotices: mocks.buildPluginCompatibilityNotices,
+    buildPluginCompatibilitySnapshotNotices: mocks.buildPluginCompatibilityNotices,
   };
 }
 
@@ -172,6 +182,36 @@ export async function loadStatusScanModuleForTest(
   vi.doMock("../channels/config-presence.js", () => ({
     hasPotentialConfiguredChannels: mocks.hasPotentialConfiguredChannels,
   }));
+  vi.doMock("../plugins/channel-plugin-ids.js", () => ({
+    hasConfiguredChannelsForReadOnlyScope: (params: {
+      config: OpenClawConfig;
+      env?: NodeJS.ProcessEnv;
+      includePersistedAuthState?: boolean;
+    }) =>
+      Boolean(
+        mocks.hasPotentialConfiguredChannels(
+          params.config,
+          params.env,
+          params.includePersistedAuthState === undefined
+            ? undefined
+            : { includePersistedAuthState: params.includePersistedAuthState },
+        ),
+      ),
+    listConfiguredChannelIdsForReadOnlyScope: (params: {
+      config: OpenClawConfig;
+      env?: NodeJS.ProcessEnv;
+      includePersistedAuthState?: boolean;
+    }) =>
+      mocks.hasPotentialConfiguredChannels(
+        params.config,
+        params.env,
+        params.includePersistedAuthState === undefined
+          ? undefined
+          : { includePersistedAuthState: params.includePersistedAuthState },
+      )
+        ? ["mock-channel"]
+        : [],
+  }));
 
   vi.doMock("../config/io.js", () => ({
     readBestEffortConfig: mocks.readBestEffortConfig,
@@ -223,6 +263,9 @@ export async function loadStatusScanModuleForTest(
   vi.doMock("../gateway/call.js", () => createStatusGatewayCallModuleMock(mocks));
   vi.doMock("../gateway/probe.js", () => ({
     probeGateway: mocks.probeGateway,
+  }));
+  vi.doMock("../gateway/probe-target.js", () => ({
+    resolveGatewayProbeTarget: mocks.resolveGatewayProbeTarget,
   }));
   vi.doMock("./status.gateway-probe.js", () => createStatusGatewayProbeModuleMock(mocks));
   vi.doMock("../gateway/connection-details.js", () => ({

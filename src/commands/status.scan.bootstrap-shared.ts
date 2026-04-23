@@ -51,21 +51,38 @@ export function shouldSkipStatusScanNetworkChecks(params: {
   return params.coldStart && !params.hasConfiguredChannels && params.all !== true;
 }
 
-export async function createStatusScanCoreBootstrap<TAgentStatus>(params: {
+type StatusScanExecRunner = (
+  command: string,
+  args: string[],
+  opts?: number | { timeoutMs?: number; maxBuffer?: number; cwd?: string },
+) => Promise<{ stdout: string; stderr: string }>;
+
+type StatusScanCoreBootstrapParams<TAgentStatus> = {
   coldStart: boolean;
   cfg: OpenClawConfig;
   hasConfiguredChannels: boolean;
   opts: { timeoutMs?: number; all?: boolean };
-  getTailnetHostname: (
-    runner: (cmd: string, args: string[]) => Promise<unknown>,
-  ) => Promise<string | null>;
+  getTailnetHostname: (runner: StatusScanExecRunner) => Promise<string | null>;
   getUpdateCheckResult: (params: {
     timeoutMs: number;
     fetchGit: boolean;
     includeRegistry: boolean;
   }) => Promise<UpdateCheckResult>;
   getAgentLocalStatuses: (cfg: OpenClawConfig) => Promise<TAgentStatus>;
-}) {
+};
+
+type StatusScanBootstrapParams<TAgentStatus, TSummary> =
+  StatusScanCoreBootstrapParams<TAgentStatus> & {
+    sourceConfig: OpenClawConfig;
+    getStatusSummary: (params: {
+      config: OpenClawConfig;
+      sourceConfig: OpenClawConfig;
+    }) => Promise<TSummary>;
+  };
+
+export async function createStatusScanCoreBootstrap<TAgentStatus>(
+  params: StatusScanCoreBootstrapParams<TAgentStatus>,
+) {
   const tailscaleMode = params.cfg.gateway?.tailscale?.mode ?? "off";
   const skipColdStartNetworkChecks = shouldSkipStatusScanNetworkChecks({
     coldStart: params.coldStart,
@@ -115,26 +132,9 @@ export async function createStatusScanCoreBootstrap<TAgentStatus>(params: {
   };
 }
 
-export async function createStatusScanBootstrap<TAgentStatus, TSummary>(params: {
-  coldStart: boolean;
-  cfg: OpenClawConfig;
-  sourceConfig: OpenClawConfig;
-  hasConfiguredChannels: boolean;
-  opts: { timeoutMs?: number; all?: boolean };
-  getTailnetHostname: (
-    runner: (cmd: string, args: string[]) => Promise<unknown>,
-  ) => Promise<string | null>;
-  getUpdateCheckResult: (params: {
-    timeoutMs: number;
-    fetchGit: boolean;
-    includeRegistry: boolean;
-  }) => Promise<UpdateCheckResult>;
-  getAgentLocalStatuses: (cfg: OpenClawConfig) => Promise<TAgentStatus>;
-  getStatusSummary: (params: {
-    config: OpenClawConfig;
-    sourceConfig: OpenClawConfig;
-  }) => Promise<TSummary>;
-}) {
+export async function createStatusScanBootstrap<TAgentStatus, TSummary>(
+  params: StatusScanBootstrapParams<TAgentStatus, TSummary>,
+) {
   const core = await createStatusScanCoreBootstrap<TAgentStatus>({
     coldStart: params.coldStart,
     cfg: params.cfg,

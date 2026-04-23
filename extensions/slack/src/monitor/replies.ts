@@ -1,4 +1,4 @@
-import type { MarkdownTableMode } from "openclaw/plugin-sdk/config-runtime";
+import type { MarkdownTableMode, OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import {
   deliverTextOrMediaReply,
   resolveSendableOutboundReplyParts,
@@ -22,6 +22,7 @@ export function readSlackReplyBlocks(payload: ReplyPayload) {
 }
 
 export async function deliverReplies(params: {
+  cfg: OpenClawConfig;
   replies: ReplyPayload[];
   target: string;
   token: string;
@@ -52,6 +53,7 @@ export async function deliverReplies(params: {
         continue;
       }
       await sendMessageSlack(params.target, trimmed, {
+        cfg: params.cfg,
         token: params.token,
         threadTs,
         accountId: params.accountId,
@@ -76,6 +78,7 @@ export async function deliverReplies(params: {
         : undefined,
       sendText: async (trimmed) => {
         await sendMessageSlack(params.target, trimmed, {
+          cfg: params.cfg,
           token: params.token,
           threadTs,
           accountId: params.accountId,
@@ -84,6 +87,7 @@ export async function deliverReplies(params: {
       },
       sendMedia: async ({ mediaUrl, caption }) => {
         await sendMessageSlack(params.target, caption ?? "", {
+          cfg: params.cfg,
           token: params.token,
           mediaUrl,
           threadTs,
@@ -127,6 +131,7 @@ export function resolveSlackThreadTs(params: {
 }
 
 type SlackReplyDeliveryPlan = {
+  peekThreadTs: () => string | undefined;
   nextThreadTs: () => string | undefined;
   markSent: () => void;
 };
@@ -138,11 +143,12 @@ function createSlackReplyReferencePlanner(params: {
   hasReplied?: boolean;
   isThreadReply?: boolean;
 }) {
-  // Keep backward-compatible behavior: when a thread id is present and caller
-  // does not provide explicit classification, stay in thread. Callers that can
-  // distinguish Slack's auto-populated top-level thread_ts should pass
-  // `isThreadReply: false` to preserve replyToMode behavior.
-  const effectiveIsThreadReply = params.isThreadReply ?? Boolean(params.incomingThreadTs);
+  // Older/internal callers may not pass explicit thread classification. Keep
+  // genuine thread replies sticky, but do not let Slack's auto-populated
+  // top-level thread_ts override the configured replyToMode.
+  const effectiveIsThreadReply =
+    params.isThreadReply ??
+    Boolean(params.incomingThreadTs && params.incomingThreadTs !== params.messageTs);
   const effectiveMode = effectiveIsThreadReply ? "all" : params.replyToMode;
   return createReplyReferencePlanner({
     replyToMode: effectiveMode,
@@ -167,6 +173,7 @@ export function createSlackReplyDeliveryPlan(params: {
     isThreadReply: params.isThreadReply,
   });
   return {
+    peekThreadTs: () => replyReference.peek(),
     nextThreadTs: () => replyReference.use(),
     markSent: () => {
       replyReference.markSent();

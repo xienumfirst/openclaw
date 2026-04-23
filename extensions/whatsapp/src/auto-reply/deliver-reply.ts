@@ -2,6 +2,7 @@ import type { MarkdownTableMode } from "openclaw/plugin-sdk/config-runtime";
 import { chunkMarkdownTextWithMode, type ChunkMode } from "openclaw/plugin-sdk/reply-chunking";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-chunking";
 import {
+  isReasoningReplyPayload,
   resolveOutboundMediaUrls,
   sendMediaWithLeadingCaption,
 } from "openclaw/plugin-sdk/reply-payload";
@@ -14,19 +15,6 @@ import { markdownToWhatsApp } from "../text-runtime.js";
 import { whatsappOutboundLog } from "./loggers.js";
 import type { WebInboundMsg } from "./types.js";
 import { elide } from "./util.js";
-
-const REASONING_PREFIX = "reasoning:";
-
-function shouldSuppressReasoningReply(payload: ReplyPayload): boolean {
-  if (payload.isReasoning === true) {
-    return true;
-  }
-  const text = payload.text;
-  if (typeof text !== "string") {
-    return false;
-  }
-  return text.trimStart().toLowerCase().startsWith(REASONING_PREFIX);
-}
 
 export async function deliverWebReply(params: {
   replyResult: ReplyPayload;
@@ -45,7 +33,7 @@ export async function deliverWebReply(params: {
 }) {
   const { replyResult, msg, maxMediaBytes, textLimit, replyLogger, connectionId, skipLog } = params;
   const replyStarted = Date.now();
-  if (shouldSuppressReasoningReply(replyResult)) {
+  if (isReasoningReplyPayload(replyResult)) {
     whatsappOutboundLog.debug(`Suppressed reasoning payload to ${msg.from}`);
     return;
   }

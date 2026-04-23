@@ -1,11 +1,8 @@
-import { hasPotentialConfiguredChannels } from "../channels/config-presence.js";
-import { resolveCommandConfigWithSecrets } from "../cli/command-config-resolution.js";
-import { getStatusCommandSecretTargetIds } from "../cli/command-secret-targets.js";
-import { readBestEffortConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.js";
 import type { collectChannelStatusIssues as collectChannelStatusIssuesFn } from "../infra/channels-status-issues.js";
 import { resolveOsSummary } from "../infra/os-summary.js";
 import type { UpdateCheckResult } from "../infra/update-check.js";
+import { hasConfiguredChannelsForReadOnlyScope } from "../plugins/channel-plugin-ids.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { buildChannelsTable as buildChannelsTableFn } from "./status-all/channels.js";
 import type { getAgentLocalStatuses as getAgentLocalStatusesFn } from "./status.agent-local.js";
@@ -24,6 +21,13 @@ let statusUpdateModulePromise: Promise<typeof import("./status.update.js")> | un
 let statusScanRuntimeModulePromise: Promise<typeof import("./status.scan.runtime.js")> | undefined;
 let gatewayCallModulePromise: Promise<typeof import("../gateway/call.js")> | undefined;
 let statusSummaryModulePromise: Promise<typeof import("./status.summary.js")> | undefined;
+let configModulePromise: Promise<typeof import("../config/config.js")> | undefined;
+let commandConfigResolutionModulePromise:
+  | Promise<typeof import("../cli/command-config-resolution.js")>
+  | undefined;
+let commandSecretTargetsModulePromise:
+  | Promise<typeof import("../cli/command-secret-targets.js")>
+  | undefined;
 
 function loadStatusScanDepsRuntimeModule() {
   statusScanDepsRuntimeModulePromise ??= import("./status.scan.deps.runtime.js");
@@ -53,6 +57,21 @@ function loadGatewayCallModule() {
 function loadStatusSummaryModule() {
   statusSummaryModulePromise ??= import("./status.summary.js");
   return statusSummaryModulePromise;
+}
+
+function loadConfigModule() {
+  configModulePromise ??= import("../config/config.js");
+  return configModulePromise;
+}
+
+function loadCommandConfigResolutionModule() {
+  commandConfigResolutionModulePromise ??= import("../cli/command-config-resolution.js");
+  return commandConfigResolutionModulePromise;
+}
+
+function loadCommandSecretTargetsModule() {
+  commandSecretTargetsModulePromise ??= import("../cli/command-secret-targets.js");
+  return commandSecretTargetsModulePromise;
 }
 
 async function resolveStatusChannelsStatus(params: {
@@ -114,7 +133,7 @@ export async function collectStatusScanOverview(params: {
   showSecrets: boolean;
   runtime?: RuntimeEnv;
   allowMissingConfigFastPath?: boolean;
-  resolveHasConfiguredChannels?: (cfg: OpenClawConfig) => boolean;
+  resolveHasConfiguredChannels?: (cfg: OpenClawConfig, sourceConfig: OpenClawConfig) => boolean;
   includeChannelsData?: boolean;
   useGatewayCallOverridesForChannelsStatus?: boolean;
   progress?: {
@@ -142,20 +161,24 @@ export async function collectStatusScanOverview(params: {
   } = await loadStatusScanCommandConfig({
     commandName: params.commandName,
     allowMissingConfigFastPath: params.allowMissingConfigFastPath,
-    readBestEffortConfig,
+    readBestEffortConfig: async () => (await loadConfigModule()).readBestEffortConfig(),
     resolveConfig: async (loadedConfig) =>
-      await resolveCommandConfigWithSecrets({
+      await (
+        await loadCommandConfigResolutionModule()
+      ).resolveCommandConfigWithSecrets({
         config: loadedConfig,
         commandName: params.commandName,
-        targetIds: getStatusCommandSecretTargetIds(),
+        targetIds: (await loadCommandSecretTargetsModule()).getStatusCommandSecretTargetIds(
+          loadedConfig,
+        ),
         mode: "read_only_status",
         ...(params.runtime ? { runtime: params.runtime } : {}),
       }),
   });
   params.progress?.tick();
   const hasConfiguredChannels = params.resolveHasConfiguredChannels
-    ? params.resolveHasConfiguredChannels(cfg)
-    : hasPotentialConfiguredChannels(cfg);
+    ? params.resolveHasConfiguredChannels(cfg, sourceConfig)
+    : hasConfiguredChannelsForReadOnlyScope({ config: cfg, activationSourceConfig: sourceConfig });
   const osSummary = resolveOsSummary();
   const bootstrap = await createStatusScanCoreBootstrap<
     Awaited<ReturnType<typeof getAgentLocalStatusesFn>>
@@ -258,6 +281,7 @@ export async function collectStatusScanOverview(params: {
 
 export async function resolveStatusSummaryFromOverview(params: {
   overview: Pick<StatusScanOverviewResult, "skipColdStartNetworkChecks" | "cfg" | "sourceConfig">;
+  includeChannelSummary?: boolean;
 }) {
   if (params.overview.skipColdStartNetworkChecks) {
     return buildColdStartStatusSummary();
@@ -266,6 +290,7 @@ export async function resolveStatusSummaryFromOverview(params: {
     getStatusSummary({
       config: params.overview.cfg,
       sourceConfig: params.overview.sourceConfig,
+      includeChannelSummary: params.includeChannelSummary,
     }),
   );
 }

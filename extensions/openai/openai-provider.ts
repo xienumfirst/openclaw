@@ -9,19 +9,16 @@ import {
   normalizeProviderId,
   type ProviderPlugin,
 } from "openclaw/plugin-sdk/provider-model-shared";
-import { buildProviderStreamFamilyHooks } from "openclaw/plugin-sdk/provider-stream-family";
+import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/text-runtime";
+import { isOpenAIApiBaseUrl } from "./base-url.js";
 import { applyOpenAIConfig, OPENAI_DEFAULT_MODEL } from "./default-models.js";
-import { buildOpenAIReplayPolicy } from "./replay-policy.js";
 import {
+  buildOpenAIResponsesProviderHooks,
+  buildOpenAISyntheticCatalogEntry,
   cloneFirstTemplateModel,
   findCatalogTemplate,
-  isOpenAIApiBaseUrl,
   matchesExactOrPrefix,
 } from "./shared.js";
-import {
-  resolveOpenAITransportTurnState,
-  resolveOpenAIWebSocketSessionPolicy,
-} from "./transport-policy.js";
 
 const PROVIDER_ID = "openai";
 const OPENAI_GPT_54_MODEL_ID = "gpt-5.4";
@@ -67,8 +64,6 @@ const OPENAI_MODERN_MODEL_IDS = [
 ] as const;
 const OPENAI_DIRECT_SPARK_MODEL_ID = "gpt-5.3-codex-spark";
 const SUPPRESSED_SPARK_PROVIDERS = new Set(["openai", "azure-openai-responses"]);
-const OPENAI_RESPONSES_STREAM_HOOKS = buildProviderStreamFamilyHooks("openai-responses-defaults");
-
 function shouldUseOpenAIResponsesTransport(params: {
   provider: string;
   api?: string | null;
@@ -105,7 +100,7 @@ function resolveOpenAIGpt54ForwardCompatModel(
   ctx: ProviderResolveDynamicModelContext,
 ): ProviderRuntimeModel | undefined {
   const trimmedModelId = ctx.modelId.trim();
-  const lower = trimmedModelId.toLowerCase();
+  const lower = normalizeLowercaseStringOrEmpty(trimmedModelId);
   let templateIds: readonly string[];
   let patch: Partial<ProviderRuntimeModel>;
   if (lower === OPENAI_GPT_54_MODEL_ID) {
@@ -179,28 +174,6 @@ function resolveOpenAIGpt54ForwardCompatModel(
   );
 }
 
-function buildSyntheticCatalogEntry(
-  template: ReturnType<typeof findCatalogTemplate>,
-  entry: {
-    id: string;
-    reasoning: boolean;
-    input: readonly ("text" | "image")[];
-    contextWindow: number;
-  },
-) {
-  if (!template) {
-    return undefined;
-  }
-  return {
-    ...template,
-    id: entry.id,
-    name: entry.id,
-    reasoning: entry.reasoning,
-    input: [...entry.input],
-    contextWindow: entry.contextWindow,
-  };
-}
-
 export function buildOpenAIProvider(): ProviderPlugin {
   return {
     id: PROVIDER_ID,
@@ -212,8 +185,8 @@ export function buildOpenAIProvider(): ProviderPlugin {
       createProviderApiKeyAuthMethod({
         providerId: PROVIDER_ID,
         methodId: "api-key",
-        label: "OpenAI API key",
-        hint: "Direct OpenAI API key",
+        label: "OpenAI API Key",
+        hint: "Use your OpenAI API key directly",
         optionKey: "openaiApiKey",
         flagName: "--openai-api-key",
         envVar: "OPENAI_API_KEY",
@@ -223,10 +196,10 @@ export function buildOpenAIProvider(): ProviderPlugin {
         applyConfig: (cfg) => applyOpenAIConfig(cfg),
         wizard: {
           choiceId: "openai-api-key",
-          choiceLabel: "OpenAI API key",
+          choiceLabel: "OpenAI API Key",
           groupId: "openai",
           groupLabel: "OpenAI",
-          groupHint: "Codex OAuth + API key",
+          groupHint: "API key + Codex auth",
         },
       }),
     ],
@@ -241,28 +214,22 @@ export function buildOpenAIProvider(): ProviderPlugin {
       shouldUseOpenAIResponsesTransport({ provider, api, baseUrl })
         ? { api: "openai-responses", baseUrl }
         : undefined,
-    buildReplayPolicy: buildOpenAIReplayPolicy,
-    prepareExtraParams: (ctx) => {
-      const transport = ctx.extraParams?.transport;
-      const hasSupportedTransport =
-        transport === "auto" || transport === "sse" || transport === "websocket";
-      const hasExplicitWarmup = typeof ctx.extraParams?.openaiWsWarmup === "boolean";
-      if (hasSupportedTransport && hasExplicitWarmup) {
-        return ctx.extraParams;
-      }
-      return {
-        ...ctx.extraParams,
-        ...(hasSupportedTransport ? {} : { transport: "auto" }),
-        ...(hasExplicitWarmup ? {} : { openaiWsWarmup: true }),
-      };
-    },
-    ...OPENAI_RESPONSES_STREAM_HOOKS,
+    ...buildOpenAIResponsesProviderHooks({ openaiWsWarmup: true }),
     matchesContextOverflowError: ({ errorMessage }) =>
       /content_filter.*(?:prompt|input).*(?:too long|exceed)/i.test(errorMessage),
-    resolveTransportTurnState: (ctx) => resolveOpenAITransportTurnState(ctx),
-    resolveWebSocketSessionPolicy: (ctx) => resolveOpenAIWebSocketSessionPolicy(ctx),
     resolveReasoningOutputMode: () => "native",
-    supportsXHighThinking: ({ modelId }) => matchesExactOrPrefix(modelId, OPENAI_XHIGH_MODEL_IDS),
+    resolveThinkingProfile: ({ modelId }) => ({
+      levels: [
+        { id: "off" },
+        { id: "minimal" },
+        { id: "low" },
+        { id: "medium" },
+        { id: "high" },
+        ...(matchesExactOrPrefix(modelId, OPENAI_XHIGH_MODEL_IDS)
+          ? [{ id: "xhigh" as const }]
+          : []),
+      ],
+    }),
     isModernModelRef: ({ modelId }) => matchesExactOrPrefix(modelId, OPENAI_MODERN_MODEL_IDS),
     buildMissingAuthMessage: (ctx) => {
       if (ctx.provider !== PROVIDER_ID || ctx.listProfileIds("openai-codex").length === 0) {
@@ -273,7 +240,7 @@ export function buildOpenAIProvider(): ProviderPlugin {
     suppressBuiltInModel: (ctx) => {
       if (
         !SUPPRESSED_SPARK_PROVIDERS.has(normalizeProviderId(ctx.provider)) ||
-        ctx.modelId.toLowerCase() !== OPENAI_DIRECT_SPARK_MODEL_ID
+        normalizeLowercaseStringOrEmpty(ctx.modelId) !== OPENAI_DIRECT_SPARK_MODEL_ID
       ) {
         return undefined;
       }
@@ -304,25 +271,25 @@ export function buildOpenAIProvider(): ProviderPlugin {
         templateIds: OPENAI_GPT_54_NANO_TEMPLATE_MODEL_IDS,
       });
       return [
-        buildSyntheticCatalogEntry(openAiGpt54Template, {
+        buildOpenAISyntheticCatalogEntry(openAiGpt54Template, {
           id: OPENAI_GPT_54_MODEL_ID,
           reasoning: true,
           input: ["text", "image"],
           contextWindow: OPENAI_GPT_54_CONTEXT_TOKENS,
         }),
-        buildSyntheticCatalogEntry(openAiGpt54ProTemplate, {
+        buildOpenAISyntheticCatalogEntry(openAiGpt54ProTemplate, {
           id: OPENAI_GPT_54_PRO_MODEL_ID,
           reasoning: true,
           input: ["text", "image"],
           contextWindow: OPENAI_GPT_54_PRO_CONTEXT_TOKENS,
         }),
-        buildSyntheticCatalogEntry(openAiGpt54MiniTemplate, {
+        buildOpenAISyntheticCatalogEntry(openAiGpt54MiniTemplate, {
           id: OPENAI_GPT_54_MINI_MODEL_ID,
           reasoning: true,
           input: ["text", "image"],
           contextWindow: OPENAI_GPT_54_MINI_CONTEXT_TOKENS,
         }),
-        buildSyntheticCatalogEntry(openAiGpt54NanoTemplate, {
+        buildOpenAISyntheticCatalogEntry(openAiGpt54NanoTemplate, {
           id: OPENAI_GPT_54_NANO_MODEL_ID,
           reasoning: true,
           input: ["text", "image"],

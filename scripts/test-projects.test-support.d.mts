@@ -23,7 +23,24 @@ export function parseTestProjectsArgs(
   watchMode: boolean;
 };
 
-export function buildVitestRunPlans(args: string[], cwd?: string): VitestRunPlan[];
+export function buildVitestRunPlans(
+  args: string[],
+  cwd?: string,
+  listChangedPaths?: (baseRef: string, cwd: string) => string[],
+): VitestRunPlan[];
+
+export function resolveChangedTargetArgs(
+  args: string[],
+  cwd?: string,
+  listChangedPaths?: (baseRef: string, cwd: string) => string[],
+): string[] | null;
+
+export function resolveChangedTestTargetPlan(changedPaths: string[]): {
+  mode: "none" | "broad" | "targets";
+  targets: string[];
+};
+
+export function listFullExtensionVitestProjectConfigs(): string[];
 
 export function createVitestRunSpecs(
   args: string[],

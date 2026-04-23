@@ -5,19 +5,23 @@ import {
 } from "../../../test/helpers/plugins/plugin-registry.js";
 import { createPluginRuntimeMock } from "../../../test/helpers/plugins/plugin-runtime-mock.js";
 import { createRuntimeEnv } from "../../../test/helpers/plugins/runtime-env.js";
-import type { OpenClawConfig, PluginRuntime } from "../runtime-api.js";
+import type { OpenClawConfig } from "../runtime-api.js";
 import type { ResolvedZaloAccount } from "../src/types.js";
 
 type MonitorModule = typeof import("../src/monitor.js");
 type SecretInputModule = typeof import("../src/secret-input.js");
+type WebhookModule = typeof import("../src/monitor.webhook.js");
 
 const monitorModuleUrl = new URL("../src/monitor.ts", import.meta.url).href;
 const secretInputModuleUrl = new URL("../src/secret-input.ts", import.meta.url).href;
+const webhookModuleUrl = new URL("../src/monitor.webhook.ts", import.meta.url).href;
 const apiModuleId = new URL("../src/api.js", import.meta.url).pathname;
 const runtimeModuleId = new URL("../src/runtime.js", import.meta.url).pathname;
 
 type UnknownMock = Mock<(...args: unknown[]) => unknown>;
 type AsyncUnknownMock = Mock<(...args: unknown[]) => Promise<unknown>>;
+const loadedMonitorModules = new Set<MonitorModule>();
+
 type ZaloLifecycleMocks = {
   setWebhookMock: AsyncUnknownMock;
   deleteWebhookMock: AsyncUnknownMock;
@@ -85,7 +89,11 @@ async function importMonitorModule(params: {
     vi.doUnmock(apiModuleId);
     vi.doUnmock(runtimeModuleId);
   }
-  return (await import(`${monitorModuleUrl}?t=${params.cacheBust}-${Date.now()}`)) as MonitorModule;
+  const module = (await import(
+    `${monitorModuleUrl}?t=${params.cacheBust}-${Date.now()}`
+  )) as MonitorModule;
+  loadedMonitorModules.add(module);
+  return module;
 }
 
 async function importSecretInputModule(cacheBust: string): Promise<SecretInputModule> {
@@ -94,13 +102,17 @@ async function importSecretInputModule(cacheBust: string): Promise<SecretInputMo
   )) as SecretInputModule;
 }
 
+async function importWebhookModule(cacheBust: string): Promise<WebhookModule> {
+  return (await import(`${webhookModuleUrl}?t=${cacheBust}-${Date.now()}`)) as WebhookModule;
+}
+
 export async function resetLifecycleTestState() {
   vi.clearAllMocks();
-  const { clearZaloWebhookSecurityStateForTest } = await importMonitorModule({
-    cacheBust: "reset",
-    mocked: false,
-  });
-  clearZaloWebhookSecurityStateForTest();
+  (await importWebhookModule("reset-webhook")).clearZaloWebhookSecurityStateForTest();
+  for (const module of loadedMonitorModules) {
+    module.__testing.clearHostedMediaRouteRefsForTest();
+  }
+  loadedMonitorModules.clear();
   setActivePluginRegistry(createEmptyPluginRegistry());
 }
 
@@ -150,12 +162,16 @@ export async function startWebhookLifecycleMonitor(params: {
   });
 
   await vi.waitFor(() => {
-    if (setWebhookMock.mock.calls.length !== 1 || registry.httpRoutes.length !== 1) {
+    const webhookRoute = registry.httpRoutes.find((route) => route.source === "zalo-webhook");
+    const hostedMediaRoute = registry.httpRoutes.find(
+      (route) => route.source === "zalo-hosted-media",
+    );
+    if (setWebhookMock.mock.calls.length !== 1 || !webhookRoute || !hostedMediaRoute) {
       throw new Error("waiting for webhook registration");
     }
   });
 
-  const route = registry.httpRoutes[0];
+  const route = registry.httpRoutes.find((entry) => entry.source === "zalo-webhook");
   if (!route) {
     throw new Error("missing plugin HTTP route");
   }

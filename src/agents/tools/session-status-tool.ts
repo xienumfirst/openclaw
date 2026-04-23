@@ -1,12 +1,10 @@
 import { Type } from "@sinclair/typebox";
-import { buildStatusText } from "../../auto-reply/reply/commands-status.js";
 import type {
   ElevatedLevel,
   ReasoningLevel,
   ThinkLevel,
   VerboseLevel,
 } from "../../auto-reply/thinking.js";
-import type { OpenClawConfig } from "../../config/config.js";
 import { loadConfig } from "../../config/config.js";
 import {
   loadSessionStore,
@@ -14,6 +12,7 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveSessionModelIdentityRef } from "../../gateway/session-utils.js";
 import {
   buildAgentMainSessionKey,
@@ -22,6 +21,8 @@ import {
   resolveAgentIdFromSessionKey,
 } from "../../routing/session-key.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
+import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js";
+import type { BuildStatusTextParams } from "../../status/status-text.js";
 import { buildTaskStatusSnapshotForRelatedSessionKeyForOwner } from "../../tasks/task-owner-access.js";
 import { formatTaskStatusDetail, formatTaskStatusTitle } from "../../tasks/task-status.js";
 import { loadModelCatalog } from "../model-catalog.js";
@@ -53,6 +54,18 @@ const SessionStatusToolSchema = Type.Object({
   sessionKey: Type.Optional(Type.String()),
   model: Type.Optional(Type.String()),
 });
+
+type CommandsStatusRuntimeModule = {
+  buildStatusText: (params: BuildStatusTextParams) => Promise<string>;
+};
+
+let commandsStatusRuntimePromise: Promise<CommandsStatusRuntimeModule> | null = null;
+
+function loadCommandsStatusRuntime(): Promise<CommandsStatusRuntimeModule> {
+  commandsStatusRuntimePromise ??=
+    import("./session-status.runtime.js") as Promise<CommandsStatusRuntimeModule>;
+  return commandsStatusRuntimePromise;
+}
 
 function resolveSessionEntry(params: {
   store: Record<string, SessionEntry>;
@@ -162,7 +175,7 @@ async function resolveModelOverride(params: {
   if (!raw) {
     return { kind: "reset" };
   }
-  if (raw.toLowerCase() === "default") {
+  if (normalizeOptionalLowercaseString(raw) === "default") {
     return { kind: "reset" };
   }
 
@@ -478,6 +491,7 @@ export function createSessionStatusTool(opts?: {
         relatedSessionKey: resolved.key,
         callerOwnerKey: visibilityRequesterKey,
       });
+      const { buildStatusText } = await loadCommandsStatusRuntime();
       const statusText = await buildStatusText({
         cfg,
         sessionEntry: statusSessionEntry,

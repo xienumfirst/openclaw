@@ -59,6 +59,7 @@ happened while the attempt was running.
 OpenClaw uses **auth profiles** for both API keys and OAuth tokens.
 
 - Secrets live in `~/.openclaw/agents/<agentId>/agent/auth-profiles.json` (legacy: `~/.openclaw/agent/auth-profiles.json`).
+- Runtime auth-routing state lives in `~/.openclaw/agents/<agentId>/agent/auth-state.json`.
 - Config `auth.profiles` / `auth.order` are **metadata + routing only** (no secrets).
 - Legacy import-only OAuth file: `~/.openclaw/credentials/oauth.json` (imported into `auth-profiles.json` on first use).
 
@@ -140,6 +141,13 @@ timeout only when the provider context is actually OpenRouter. Generic internal
 fallback text such as `LLM request failed with an unknown error.` stays
 conservative and does not trigger failover by itself.
 
+Some provider SDKs may otherwise sleep for a long `Retry-After` window before
+returning control to OpenClaw. For Stainless-based SDKs such as Anthropic and
+OpenAI, OpenClaw caps SDK-internal `retry-after-ms` / `retry-after` waits at 60
+seconds by default and surfaces longer retryable responses immediately so this
+failover path can run. Tune or disable the cap with
+`OPENCLAW_SDK_RETRY_MAX_WAIT_SECONDS`; see [/concepts/retry](/concepts/retry).
+
 Rate-limit cooldowns can also be model-scoped:
 
 - OpenClaw records `cooldownModel` for rate-limit failures when the failing
@@ -155,7 +163,7 @@ Cooldowns use exponential backoff:
 - 25 minutes
 - 1 hour (cap)
 
-State is stored in `auth-profiles.json` under `usageStats`:
+State is stored in `auth-state.json` under `usageStats`:
 
 ```json
 {
@@ -184,7 +192,7 @@ limit reached, resets tomorrow`, or `organization spending limit exceeded`).
 Those stay on the short cooldown/failover path instead of the long
 billing-disable path.
 
-State is stored in `auth-profiles.json`:
+State is stored in `auth-state.json`:
 
 ```json
 {

@@ -4,6 +4,7 @@ import {
   resolveStatusGatewayHealthSafe,
   resolveStatusLastHeartbeat,
   resolveStatusRuntimeDetails,
+  resolveStatusRuntimeSnapshot,
   resolveStatusSecurityAudit,
   resolveStatusServiceSummaries,
   resolveStatusUsageSummary,
@@ -15,6 +16,11 @@ const mocks = vi.hoisted(() => ({
   callGateway: vi.fn(),
   getDaemonStatusSummary: vi.fn(),
   getNodeDaemonStatusSummary: vi.fn(),
+  resolveReadOnlyChannelPluginsForConfig: vi.fn(),
+}));
+
+vi.mock("../channels/plugins/read-only.js", () => ({
+  resolveReadOnlyChannelPluginsForConfig: mocks.resolveReadOnlyChannelPluginsForConfig,
 }));
 
 vi.mock("../infra/provider-usage.js", () => ({
@@ -42,9 +48,40 @@ describe("status-runtime-shared", () => {
     mocks.callGateway.mockResolvedValue({ ok: true });
     mocks.getDaemonStatusSummary.mockResolvedValue({ label: "LaunchAgent" });
     mocks.getNodeDaemonStatusSummary.mockResolvedValue({ label: "node" });
+    mocks.resolveReadOnlyChannelPluginsForConfig.mockReturnValue({
+      plugins: [{ id: "telegram" }],
+      configuredChannelIds: ["telegram"],
+      missingConfiguredChannelIds: [],
+    });
   });
 
   it("resolves the shared security audit payload", async () => {
+    await resolveStatusSecurityAudit({
+      config: { gateway: {} },
+      sourceConfig: { gateway: {} },
+    });
+
+    expect(mocks.runSecurityAudit).toHaveBeenCalledWith({
+      config: { gateway: {} },
+      sourceConfig: { gateway: {} },
+      deep: false,
+      includeFilesystem: true,
+      includeChannelSecurity: true,
+      plugins: expect.any(Array),
+    });
+    expect(mocks.resolveReadOnlyChannelPluginsForConfig).toHaveBeenCalledWith(
+      { gateway: {} },
+      { activationSourceConfig: { gateway: {} } },
+    );
+  });
+
+  it("lets the security audit load configured channel plugins when read-only discovery is incomplete", async () => {
+    mocks.resolveReadOnlyChannelPluginsForConfig.mockReturnValue({
+      plugins: [],
+      configuredChannelIds: ["external"],
+      missingConfiguredChannelIds: ["external"],
+    });
+
     await resolveStatusSecurityAudit({
       config: { gateway: {} },
       sourceConfig: { gateway: {} },
@@ -215,6 +252,35 @@ describe("status-runtime-shared", () => {
       lastHeartbeat: null,
       gatewayService: { label: "LaunchAgent" },
       nodeService: { label: "node" },
+    });
+  });
+
+  it("resolves the shared runtime snapshot with security audit and runtime details", async () => {
+    await expect(
+      resolveStatusRuntimeSnapshot({
+        config: { gateway: {} },
+        sourceConfig: { gateway: { mode: "local" } },
+        timeoutMs: 1234,
+        usage: true,
+        deep: true,
+        gatewayReachable: true,
+        includeSecurityAudit: true,
+      }),
+    ).resolves.toEqual({
+      securityAudit: { summary: { critical: 0 }, findings: [] },
+      usage: { providers: [] },
+      health: { ok: true },
+      lastHeartbeat: { ok: true },
+      gatewayService: { label: "LaunchAgent" },
+      nodeService: { label: "node" },
+    });
+    expect(mocks.runSecurityAudit).toHaveBeenCalledWith({
+      config: { gateway: {} },
+      sourceConfig: { gateway: { mode: "local" } },
+      deep: false,
+      includeFilesystem: true,
+      includeChannelSecurity: true,
+      plugins: expect.any(Array),
     });
   });
 });
